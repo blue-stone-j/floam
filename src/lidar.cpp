@@ -1,5 +1,5 @@
 /*
-Description: 系统的参数配置，比如雷达线束数量、扫描周期等
+Description: 系统的参数配置,比如雷达线束数量、扫描周期等
 Author     : Ji Qingshi
 date       :
 */

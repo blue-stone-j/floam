@@ -55,9 +55,11 @@ void odom_estimation( )
   {
     if (!pointCloudEdgeBuf.empty( ) && !pointCloudSurfBuf.empty( ))
     {
-      // read data
+      // read data from buffer
+      // 注意点云的时间戳同步， 0.5*scan_period时间内的认为是一个位置的点云，不合条件的pop掉
       mutex_lock.lock( );
-      if (!pointCloudSurfBuf.empty( ) && (pointCloudSurfBuf.front( )->header.stamp.toSec( ) < pointCloudEdgeBuf.front( )->header.stamp.toSec( ) - 0.5 * lidar_param.scan_period))
+      if (!pointCloudSurfBuf.empty( )
+          && (pointCloudSurfBuf.front( )->header.stamp.toSec( ) < pointCloudEdgeBuf.front( )->header.stamp.toSec( ) - 0.5 * lidar_param.scan_period))
       {
         pointCloudSurfBuf.pop( );
         ROS_WARN_ONCE("time stamp unaligned with extra point cloud, pls check your data --> odom correction");
@@ -65,7 +67,8 @@ void odom_estimation( )
         continue;
       }
 
-      if (!pointCloudEdgeBuf.empty( ) && (pointCloudEdgeBuf.front( )->header.stamp.toSec( ) < pointCloudSurfBuf.front( )->header.stamp.toSec( ) - 0.5 * lidar_param.scan_period))
+      if (!pointCloudEdgeBuf.empty( )
+          && (pointCloudEdgeBuf.front( )->header.stamp.toSec( ) < pointCloudSurfBuf.front( )->header.stamp.toSec( ) - 0.5 * lidar_param.scan_period))
       {
         pointCloudEdgeBuf.pop( );
         ROS_WARN_ONCE("time stamp unaligned with extra point cloud, pls check your data --> odom correction");
@@ -74,6 +77,7 @@ void odom_estimation( )
       }
       // if time aligned
 
+      // 把同步好的对应点云帧取出来
       pcl::PointCloud<pcl::PointXYZI>::Ptr pointcloud_surf_in(new pcl::PointCloud<pcl::PointXYZI>( ));
       pcl::PointCloud<pcl::PointXYZI>::Ptr pointcloud_edge_in(new pcl::PointCloud<pcl::PointXYZI>( ));
       pcl::fromROSMsg(*pointCloudEdgeBuf.front( ), *pointcloud_edge_in);
@@ -83,8 +87,10 @@ void odom_estimation( )
       pointCloudSurfBuf.pop( );
       mutex_lock.unlock( );
 
+      // 第一帧直接加入map,否则更新map
       if (is_odom_inited == false)
       {
+        // 分别将当前特征点云加入到相应的特征点局部地图中
         odomEstimation.initMapWithPoints(pointcloud_edge_in, pointcloud_surf_in);
         is_odom_inited = true;
         ROS_INFO("odom inited");
@@ -93,6 +99,7 @@ void odom_estimation( )
       {
         std::chrono::time_point<std::chrono::system_clock> start, end;
         start = std::chrono::system_clock::now( );
+        // 构建优化问题并求解、更新odom
         odomEstimation.updatePointsToMap(pointcloud_edge_in, pointcloud_surf_in);
         end                                          = std::chrono::system_clock::now( );
         std::chrono::duration<float> elapsed_seconds = end - start;
@@ -106,6 +113,7 @@ void odom_estimation( )
       // q_current.normalize();
       Eigen::Vector3d t_current = odomEstimation.odom.translation( );
 
+      // 发布map->base_link的tf
       static tf::TransformBroadcaster br;
       tf::Transform transform;
       transform.setOrigin(tf::Vector3(t_current.x( ), t_current.y( ), t_current.z( )));
@@ -126,11 +134,11 @@ void odom_estimation( )
       laserOdometry.pose.pose.position.y    = t_current.y( );
       laserOdometry.pose.pose.position.z    = t_current.z( );
       pubLaserOdometry.publish(laserOdometry);
-    }
+    } // endif: !empty
     // sleep 2 ms every time
     std::chrono::milliseconds dura(2);
     std::this_thread::sleep_for(dura);
-  }
+  } // endwhile: 1
 }
 
 int main(int argc, char **argv)
@@ -138,6 +146,7 @@ int main(int argc, char **argv)
   ros::init(argc, argv, "main");
   ros::NodeHandle nh;
 
+  // 参数设置
   int scan_line         = 64;
   double vertical_angle = 2.0;
   double scan_period    = 0.1;
@@ -158,12 +167,14 @@ int main(int argc, char **argv)
   lidar_param.setMinDistance(min_dis);
 
   odomEstimation.init(lidar_param, map_resolution);
+  // 接收特征点云，装进buffer中
   ros::Subscriber subEdgeLaserCloud =
       nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_edge", 100, velodyneEdgeHandler);
   ros::Subscriber subSurfLaserCloud =
       nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_surf", 100, velodyneSurfHandler);
 
   pubLaserOdometry = nh.advertise<nav_msgs::Odometry>("/odom", 100);
+  // 业务逻辑在odom_estimation线程中处理，发布一个estimate的odometry
   std::thread odom_estimation_process{odom_estimation};
 
   ros::spin( );

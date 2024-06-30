@@ -37,7 +37,7 @@ class SurfNormAnalyticCostFunction : public ceres::SizedCostFunction<1, 7>
 
   Eigen::Vector3d curr_point;
   Eigen::Vector3d plane_unit_norm;
-  double negative_OA_dot_norm;
+  double negative_OA_dot_norm; //???
 };
 
 class PoseSE3Parameterization : public ceres::LocalParameterization

@@ -24,7 +24,7 @@ date       :
 #include <math.h>
 #include <vector>
 
-#define LASER_CELL_WIDTH 50.0 // size of map grid???
+#define LASER_CELL_WIDTH 50.0 // size of map grid
 #define LASER_CELL_HEIGHT 50.0
 #define LASER_CELL_DEPTH 50.0
 
@@ -39,14 +39,13 @@ class LaserMappingClass
   LaserMappingClass( );
   void init(double map_resolution); // initialize???
   // 等距变换(Isometry Transform)可以看作是维持任意两点距离不变的仿射变换
-  void updateCurrentPointsToMap(const pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_in, const Eigen::Isometry3d &pose_current);
+  void updateCurrentPointsToMap(const pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_in,
+                                const Eigen::Isometry3d &pose_current);
   pcl::PointCloud<pcl::PointXYZI>::Ptr getMap(void); //???
 
  private:
-  int origin_in_map_x, origin_in_map_y, origin_in_map_z; //???
-  int map_width;
-  int map_height;
-  int map_depth;
+  int origin_in_map_x, origin_in_map_y, origin_in_map_z; // index of origin grid of map
+  int map_width, map_height, map_depth;
   std::vector<std::vector<std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr>>> map; // 3d map
   pcl::VoxelGrid<pcl::PointXYZI> downSizeFilter;
 
@@ -56,7 +55,7 @@ class LaserMappingClass
   void addHeightCellPositive(void);
   void addDepthCellNegative(void);
   void addDepthCellPositive(void);
-  void checkPoints(int &x, int &y, int &z); //???
+  void checkPoints(int &x, int &y, int &z);
 };
 
 #endif // _LASER_MAPPING_H_

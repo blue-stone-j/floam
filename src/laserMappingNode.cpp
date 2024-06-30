@@ -56,6 +56,7 @@ void laser_mapping( )
     if (!odometryBuf.empty( ) && !pointCloudBuf.empty( ))
     {
       // read data
+      // 先时间戳同步，odom和当前点云帧在0.5 * scan_period时间内
       mutex_lock.lock( );
       if (!pointCloudBuf.empty( ) && pointCloudBuf.front( )->header.stamp.toSec( ) < odometryBuf.front( )->header.stamp.toSec( ) - 0.5 * lidar_param.scan_period)
       {
@@ -73,14 +74,19 @@ void laser_mapping( )
         continue;
       }
 
-      // if time aligned
+      // if time aligned, get cloud
       pcl::PointCloud<pcl::PointXYZI>::Ptr pointcloud_in(new pcl::PointCloud<pcl::PointXYZI>( ));
       pcl::fromROSMsg(*pointCloudBuf.front( ), *pointcloud_in);
       ros::Time pointcloud_time = (pointCloudBuf.front( ))->header.stamp;
 
       Eigen::Isometry3d current_pose = Eigen::Isometry3d::Identity( );
-      current_pose.rotate(Eigen::Quaterniond(odometryBuf.front( )->pose.pose.orientation.w, odometryBuf.front( )->pose.pose.orientation.x, odometryBuf.front( )->pose.pose.orientation.y, odometryBuf.front( )->pose.pose.orientation.z));
-      current_pose.pretranslate(Eigen::Vector3d(odometryBuf.front( )->pose.pose.position.x, odometryBuf.front( )->pose.pose.position.y, odometryBuf.front( )->pose.pose.position.z));
+      current_pose.rotate(Eigen::Quaterniond(odometryBuf.front( )->pose.pose.orientation.w,
+                                             odometryBuf.front( )->pose.pose.orientation.x,
+                                             odometryBuf.front( )->pose.pose.orientation.y,
+                                             odometryBuf.front( )->pose.pose.orientation.z));
+      current_pose.pretranslate(Eigen::Vector3d(odometryBuf.front( )->pose.pose.position.x,
+                                                odometryBuf.front( )->pose.pose.position.y,
+                                                odometryBuf.front( )->pose.pose.position.z));
       pointCloudBuf.pop( );
       odometryBuf.pop( );
       mutex_lock.unlock( );
@@ -93,11 +99,11 @@ void laser_mapping( )
       PointsMsg.header.stamp    = pointcloud_time;
       PointsMsg.header.frame_id = "map";
       map_pub.publish(PointsMsg);
-    }
+    } // endif: !empty and time aligned
     // sleep 2 ms every time
     std::chrono::milliseconds dura(2);
     std::this_thread::sleep_for(dura);
-  }
+  } // endwhile: 1
 }
 
 int main(int argc, char **argv)
@@ -125,10 +131,13 @@ int main(int argc, char **argv)
   lidar_param.setMinDistance(min_dis);
 
   laserMapping.init(map_resolution);
+
+  // 接收处理的过滤点云和odom数据，只装buffers，业务逻辑还是在另外的mapping线程中处理
   ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points_filtered", 100, velodyneHandler);
   ros::Subscriber subOdometry   = nh.subscribe<nav_msgs::Odometry>("/odom", 100, odomCallback);
 
   map_pub = nh.advertise<sensor_msgs::PointCloud2>("/map", 100);
+  // 在mapping线程中处理建图
   std::thread laser_mapping_process{laser_mapping};
 
   ros::spin( );

@@ -23,14 +23,16 @@ void OdomEstimationClass::init(lidar::Lidar lidar_param, double map_resolution)
   optimization_count = 2;
 }
 
-void OdomEstimationClass::initMapWithPoints(const pcl::PointCloud<pcl::PointXYZI>::Ptr &edge_in, const pcl::PointCloud<pcl::PointXYZI>::Ptr &surf_in)
+void OdomEstimationClass::initMapWithPoints(const pcl::PointCloud<pcl::PointXYZI>::Ptr &edge_in,
+                                            const pcl::PointCloud<pcl::PointXYZI>::Ptr &surf_in)
 {
   *laserCloudCornerMap += *edge_in;
   *laserCloudSurfMap += *surf_in;
   optimization_count = 12;
 }
 
-void OdomEstimationClass::updatePointsToMap(const pcl::PointCloud<pcl::PointXYZI>::Ptr &edge_in, const pcl::PointCloud<pcl::PointXYZI>::Ptr &surf_in)
+void OdomEstimationClass::updatePointsToMap(const pcl::PointCloud<pcl::PointXYZI>::Ptr &edge_in,
+                                            const pcl::PointCloud<pcl::PointXYZI>::Ptr &surf_in)
 {
   if (optimization_count > 2)
   {
@@ -43,9 +45,11 @@ void OdomEstimationClass::updatePointsToMap(const pcl::PointCloud<pcl::PointXYZI
   last_odom = odom;
   odom      = odom_prediction;
 
+  // q_w_curr t_w_curr，优化后再更新
   q_w_curr = Eigen::Quaterniond(odom.rotation( ));
   t_w_curr = odom.translation( );
 
+  // downsample
   pcl::PointCloud<pcl::PointXYZI>::Ptr downsampledEdgeCloud(new pcl::PointCloud<pcl::PointXYZI>( ));
   pcl::PointCloud<pcl::PointXYZI>::Ptr downsampledSurfCloud(new pcl::PointCloud<pcl::PointXYZI>( ));
   downSamplingToMap(edge_in, downsampledEdgeCloud, surf_in, downsampledSurfCloud);
@@ -55,14 +59,16 @@ void OdomEstimationClass::updatePointsToMap(const pcl::PointCloud<pcl::PointXYZI
     kdtreeEdgeMap->setInputCloud(laserCloudCornerMap);
     kdtreeSurfMap->setInputCloud(laserCloudSurfMap);
 
+    // ceres优化，附近的多帧点云构建优化问题
     for (int iterCount = 0; iterCount < optimization_count; iterCount++)
     {
       ceres::LossFunction *loss_function = new ceres::HuberLoss(0.1);
       ceres::Problem::Options problem_options;
-      ceres::Problem problem(problem_options);
-      // 7 = 3(translation) + 4(quaternion)
+      ceres::Problem problem(problem_options); // 优化问题
+      // add residual block: 7 = 3(translation) + 4(quaternion)
       problem.AddParameterBlock(parameters, 7, new PoseSE3Parameterization( ));
 
+      // 对两种特征点云分别构建点到平面、点到边缘的残差项
       addEdgeCostFactor(downsampledEdgeCloud, laserCloudCornerMap, problem, loss_function);
       addSurfCostFactor(downsampledSurfCloud, laserCloudSurfMap, problem, loss_function);
 
@@ -74,13 +80,16 @@ void OdomEstimationClass::updatePointsToMap(const pcl::PointCloud<pcl::PointXYZI
       options.gradient_check_relative_precision = 1e-4;
       ceres::Solver::Summary summary;
 
+      // 求解问题, 优化完成后的结果更新在 q_w_curr、t_w_curr(there is a map in head file)
       ceres::Solve(options, &problem, &summary);
-    }
-  }
+    } // endfor: optimize pose
+  } // endif: enough points in map
   else
   {
     printf("not enough points in map to associate, map error");
   }
+
+  // odom is global varible
   odom                = Eigen::Isometry3d::Identity( );
   odom.linear( )      = q_w_curr.toRotationMatrix( );
   odom.translation( ) = t_w_curr;
@@ -119,12 +128,14 @@ void OdomEstimationClass::addEdgeCostFactor(const pcl::PointCloud<pcl::PointXYZI
     pcl::PointXYZI point_temp;
     pointAssociateToMap(&(pc_in->points[i]), &point_temp); // tansform point to world frame using cur q&t
 
+    // 寻找最近邻的5个点
     std::vector<int> pointSearchInd;
     std::vector<float> pointSearchSqDis;
     kdtreeEdgeMap->nearestKSearch(point_temp, 5, pointSearchInd, pointSearchSqDis);
     if (pointSearchSqDis[4] < 1.0)
     {
       std::vector<Eigen::Vector3d> nearCorners;
+      // 计算均值
       Eigen::Vector3d center(0, 0, 0);
       for (int j = 0; j < 5; j++)
       {
@@ -135,7 +146,7 @@ void OdomEstimationClass::addEdgeCostFactor(const pcl::PointCloud<pcl::PointXYZI
         nearCorners.push_back(tmp);
       }
       center = center / 5.0;
-
+      // 计算方差
       Eigen::Matrix3d covMat = Eigen::Matrix3d::Zero( );
       for (int j = 0; j < 5; j++)
       {
@@ -143,30 +154,38 @@ void OdomEstimationClass::addEdgeCostFactor(const pcl::PointCloud<pcl::PointXYZI
         covMat                                  = covMat + tmpZeroMean * tmpZeroMean.transpose( );
       }
 
+      // 主成分分析，获取直线的参数
       Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(covMat);
 
-      Eigen::Vector3d unit_direction = saes.eigenvectors( ).col(2); // direction of line
+      Eigen::Vector3d unit_direction = saes.eigenvectors( ).col(2); // direction of line(corresponding to largest eigen value)
       Eigen::Vector3d curr_point(pc_in->points[i].x, pc_in->points[i].y, pc_in->points[i].z);
+      // valid line: largest eigen value is much larger than other two values
       if (saes.eigenvalues( )[2] > 3 * saes.eigenvalues( )[1])
-      { // valid line
+      {
         Eigen::Vector3d point_on_line = center;
         Eigen::Vector3d point_a, point_b;
+        // 取直线的两点，中点+-0.1×(直线方向单位向量)
         point_a = 0.1 * unit_direction + point_on_line;
         point_b = -0.1 * unit_direction + point_on_line;
 
+        // 用点O，A，B构造点到线的距离的残差项，注意这三个点都是在上一帧的Lidar坐标系下，即，残差 = 点O到直线AB的距离
         ceres::CostFunction *cost_function = new EdgeAnalyticCostFunction(curr_point, point_a, point_b);
+        // 添加边缘点关联构建的残差项
         problem.AddResidualBlock(cost_function, loss_function, parameters);
         corner_num++;
       }
-    }
-  }
+    } // endif: cloud enough
+  } // endfor: have added all edges to problem
   if (corner_num < 20)
   {
     printf("not enough correct points");
   }
 }
 
-void OdomEstimationClass::addSurfCostFactor(const pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_in, const pcl::PointCloud<pcl::PointXYZI>::Ptr &map_in, ceres::Problem &problem, ceres::LossFunction *loss_function)
+void OdomEstimationClass::addSurfCostFactor(const pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_in,
+                                            const pcl::PointCloud<pcl::PointXYZI>::Ptr &map_in,
+                                            ceres::Problem &problem,
+                                            ceres::LossFunction *loss_function)
 {
   int surf_num = 0;
   for (int i = 0; i < (int)pc_in->points.size( ); i++)
@@ -177,26 +196,36 @@ void OdomEstimationClass::addSurfCostFactor(const pcl::PointCloud<pcl::PointXYZI
     std::vector<float> pointSearchSqDis;
     kdtreeSurfMap->nearestKSearch(point_temp, 5, pointSearchInd, pointSearchSqDis);
 
+    // 与上面的建立corner特征点之间的关联类似，寻找平面特征点O的最近邻点ABC，
+    // 即基于最近邻原理建立surf特征点之间的关联，find correspondence for plane features
+    // 寻找五个紧邻点
     Eigen::Matrix<double, 5, 3> matA0;
     Eigen::Matrix<double, 5, 1> matB0 = -1 * Eigen::Matrix<double, 5, 1>::Ones( );
     if (pointSearchSqDis[4] < 1.0)
     {
+      // 5*3的矩阵
       for (int j = 0; j < 5; j++)
       {
         matA0(j, 0) = map_in->points[pointSearchInd[j]].x;
         matA0(j, 1) = map_in->points[pointSearchInd[j]].y;
         matA0(j, 2) = map_in->points[pointSearchInd[j]].z;
       }
-      // find the norm of plane
+      // calculate normal of plane
+      // plane equation: Ax+By+Cz+D = 0 =>  (x,y,z)(A/D,B/D,C/D)^T = -1  => 求解  Ax = b ,x即为法向量
       Eigen::Vector3d norm        = matA0.colPivHouseholderQr( ).solve(matB0);
       double negative_OA_dot_norm = 1 / norm.norm( );
       norm.normalize( );
 
+      // 判断平面是否有效
+      // Here n(pa, pb, pc) is unit norm of plane   X^T*n = -1 =>  X^T*n/|n| + 1/|n| = 0
       bool planeValid = true;
       for (int j = 0; j < 5; j++)
       {
         // if OX * n > 0.2, then plane is not fit well
-        if (fabs(norm(0) * map_in->points[pointSearchInd[j]].x + norm(1) * map_in->points[pointSearchInd[j]].y + norm(2) * map_in->points[pointSearchInd[j]].z + negative_OA_dot_norm) > 0.2)
+        if (fabs(norm(0) * map_in->points[pointSearchInd[j]].x
+                 + norm(1) * map_in->points[pointSearchInd[j]].y
+                 + norm(2) * map_in->points[pointSearchInd[j]].z + negative_OA_dot_norm)
+            > 0.2)
         {
           planeValid = false;
           break;
@@ -205,20 +234,23 @@ void OdomEstimationClass::addSurfCostFactor(const pcl::PointCloud<pcl::PointXYZI
       Eigen::Vector3d curr_point(pc_in->points[i].x, pc_in->points[i].y, pc_in->points[i].z);
       if (planeValid)
       {
+        // 有效的话t添加点到平面的残差项
+        // 用点O，A，B，C构造点到面的距离的残差项，注意这三个点都是在上一帧的Lidar坐标系下，即，残差 = 点O到平面ABC的距离
         ceres::CostFunction *cost_function = new SurfNormAnalyticCostFunction(curr_point, norm, negative_OA_dot_norm);
         problem.AddResidualBlock(cost_function, loss_function, parameters);
 
         surf_num++;
       }
-    }
-  }
+    } // endif: close enough
+  } // endfor: have added all surfs to problem
   if (surf_num < 20)
   {
     printf("not enough correct points");
   }
 }
 
-void OdomEstimationClass::addPointsToMap(const pcl::PointCloud<pcl::PointXYZI>::Ptr &downsampledEdgeCloud, const pcl::PointCloud<pcl::PointXYZI>::Ptr &downsampledSurfCloud)
+void OdomEstimationClass::addPointsToMap(const pcl::PointCloud<pcl::PointXYZI>::Ptr &downsampledEdgeCloud,
+                                         const pcl::PointCloud<pcl::PointXYZI>::Ptr &downsampledSurfCloud)
 {
   for (int i = 0; i < (int)downsampledEdgeCloud->points.size( ); i++)
   {
@@ -241,6 +273,7 @@ void OdomEstimationClass::addPointsToMap(const pcl::PointCloud<pcl::PointXYZI>::
   double y_max = +odom.translation( ).y( ) + 100;
   double z_max = +odom.translation( ).z( ) + 100;
 
+  // crop and downsample
   // ROS_INFO("size : %f,%f,%f,%f,%f,%f", x_min, y_min, z_min,x_max, y_max, z_max);
   cropBoxFilter.setMin(Eigen::Vector4f(x_min, y_min, z_min, 1.0));
   cropBoxFilter.setMax(Eigen::Vector4f(x_max, y_max, z_max, 1.0));

@@ -4,7 +4,9 @@
 
 #include "lidarOptimization.h"
 
-EdgeAnalyticCostFunction::EdgeAnalyticCostFunction(Eigen::Vector3d curr_point_, Eigen::Vector3d last_point_a_, Eigen::Vector3d last_point_b_) :
+EdgeAnalyticCostFunction::EdgeAnalyticCostFunction(Eigen::Vector3d curr_point_,
+                                                   Eigen::Vector3d last_point_a_,
+                                                   Eigen::Vector3d last_point_b_) :
   curr_point(curr_point_), last_point_a(last_point_a_), last_point_b(last_point_b_)
 {
 }
@@ -39,7 +41,10 @@ bool EdgeAnalyticCostFunction::Evaluate(double const *const *parameters, double 
   return true;
 }
 
-SurfNormAnalyticCostFunction::SurfNormAnalyticCostFunction(Eigen::Vector3d curr_point_, Eigen::Vector3d plane_unit_norm_, double negative_OA_dot_norm_) :
+// surf norm cost
+SurfNormAnalyticCostFunction::SurfNormAnalyticCostFunction(Eigen::Vector3d curr_point_,
+                                                           Eigen::Vector3d plane_unit_norm_,
+                                                           double negative_OA_dot_norm_) :
   curr_point(curr_point_), plane_unit_norm(plane_unit_norm_), negative_OA_dot_norm(negative_OA_dot_norm_)
 {
 }

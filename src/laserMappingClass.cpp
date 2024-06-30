@@ -10,8 +10,9 @@ void LaserMappingClass::init(double map_resolution)
 {
   // init map
   // init can have real object, but future added block does not need
+  // traverse every sub point clouds
   for (int i = 0; i < LASER_CELL_RANGE_HORIZONTAL * 2 + 1; i++)
-  { // traverse every sub point clouds
+  {
     std::vector<std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr>> map_height_temp; // a horizontal map
     for (int j = 0; j < LASER_CELL_RANGE_HORIZONTAL * 2 + 1; j++)
     {
@@ -157,8 +158,7 @@ void LaserMappingClass::checkPoints(int &x, int &y, int &z)
     z++;
   }
 
-  // initialize
-  // create object if area is null
+  // initialize: create object if area is null
   for (int i = x - LASER_CELL_RANGE_HORIZONTAL; i < x + LASER_CELL_RANGE_HORIZONTAL + 1; i++)
   {
     for (int j = y - LASER_CELL_RANGE_HORIZONTAL; j < y + LASER_CELL_RANGE_HORIZONTAL + 1; j++)
@@ -176,8 +176,10 @@ void LaserMappingClass::checkPoints(int &x, int &y, int &z)
 }
 
 // update points to map
-void LaserMappingClass::updateCurrentPointsToMap(const pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_in, const Eigen::Isometry3d &pose_current)
+void LaserMappingClass::updateCurrentPointsToMap(const pcl::PointCloud<pcl::PointXYZI>::Ptr &pc_in,
+                                                 const Eigen::Isometry3d &pose_current)
 {
+  // 当前odom在哪一个格子里面
   int currentPosIdX = int(std::floor(pose_current.translation( ).x( ) / LASER_CELL_WIDTH + 0.5)) + origin_in_map_x;
   int currentPosIdY = int(std::floor(pose_current.translation( ).y( ) / LASER_CELL_HEIGHT + 0.5)) + origin_in_map_y;
   int currentPosIdZ = int(std::floor(pose_current.translation( ).z( ) / LASER_CELL_DEPTH + 0.5)) + origin_in_map_z;
